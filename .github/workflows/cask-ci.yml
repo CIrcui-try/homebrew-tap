@@ -1,0 +1,56 @@
+name: Cask CI
+
+on:
+  pull_request:
+    paths:
+      - Casks/circuit.rb
+      - .github/workflows/cask-ci.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cask-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-cask:
+    name: Validate Circuit cask
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate changed files
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          changed_files="$(gh pr view "${{ github.event.pull_request.number }}" --json files --jq '.files[].path')"
+
+          allowed=1
+          while IFS= read -r path; do
+            case "$path" in
+              Casks/circuit.rb|.github/workflows/cask-ci.yml)
+                ;;
+              *)
+                echo "Unexpected PR file: $path"
+                allowed=0
+                ;;
+            esac
+          done <<< "$changed_files"
+
+          if [ "$allowed" -ne 1 ]; then
+            exit 1
+          fi
+
+      - name: Tap local checkout
+        run: brew tap CIrcui-try/tap "$PWD"
+
+      - name: Audit cask
+        run: brew audit --cask --tap CIrcui-try/tap
+
+      - name: Smoke test cask install
+        run: brew install --cask --no-quarantine --dry-run CIrcui-try/tap/circuit
